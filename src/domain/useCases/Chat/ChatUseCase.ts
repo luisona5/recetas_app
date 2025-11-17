@@ -1,11 +1,11 @@
 import { supabase } from "@/src/data/services/supabaseClient";
 import { Mensaje } from "../../models/Mensaje";
 import { RealtimeChannel } from "@supabase/supabase-js";
-import { GiftedChat, IMessage } from "react-native-gifted-chat";
 
 
 export class ChatUseCase {
   private channel: RealtimeChannel | null = null;
+  private typingChannel: RealtimeChannel | null = null; 
 
   // Obtener mensajes históricos
   async obtenerMensajes(limite: number = 50): Promise<Mensaje[]> {
@@ -170,4 +170,70 @@ export class ChatUseCase {
       return { success: false, error: error.message };
     }
   }
+
+  async actualizarEstadoEscritura(isTyping: boolean): Promise<void> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Obtener email del usuario
+      const { data: userData } = await supabase
+        .from('usuarios')
+        .select('email')
+        .eq('id', user.id)
+        .single();
+
+      // Upsert en typing_status
+      await supabase
+        .from('typing_status')
+        .upsert({
+          usuario_id: user.id,
+          usuario_email: userData?.email || 'Usuario',
+          is_typing: isTyping,
+          updated_at: new Date().toISOString(),
+        });
+
+    } catch (error) {
+      console.error('Error al actualizar estado de escritura:', error);
+    }
+  }
+
+  // NUEVO: Suscribirse a cambios en typing status
+  suscribirseATypingStatus(callback: (usuarios: string[]) => void) {
+    this.typingChannel = supabase.channel('typing-status-channel');
+
+    this.typingChannel
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'typing_status'
+        },
+        async () => {
+          // Obtener todos los usuarios que están escribiendo
+          const { data } = await supabase
+            .from('typing_status')
+            .select('usuario_email, usuario_id')
+            .eq('is_typing', true);
+
+          // Filtrar al usuario actual
+          const { data: { user } } = await supabase.auth.getUser();
+          const usuariosEscribiendo = (data || [])
+            .filter(u => u.usuario_id !== user?.id)
+            .map(u => u.usuario_email.split('@')[0]); // Solo nombre
+
+          callback(usuariosEscribiendo);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (this.typingChannel) {
+        supabase.removeChannel(this.typingChannel);
+        this.typingChannel = null;
+      }
+    };
+  }
+
 }

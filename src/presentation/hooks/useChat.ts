@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ChatUseCase } from "@/src/domain/useCases/Chat/ChatUseCase";
 import { Mensaje } from "@/src/domain/models/Mensaje";
 
@@ -8,6 +8,9 @@ export const useChat = () => {
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [cargando, setCargando] = useState(true);
   const [enviando, setEnviando] = useState(false);
+  const [usuariosEscribiendo, setUsuariosEscribiendo] = useState<string[]>([]);
+  const typingTimeoutRef = useRef<NodeJS.Timeout>(); // ⚠️ CAMBIO 1: Agregué 'useRef' a la importación y a la declaración si faltaba en tu snippet.
+
 
   // Cargar mensajes históricos
   const cargarMensajes = useCallback(async () => {
@@ -37,15 +40,27 @@ export const useChat = () => {
     return resultado;
   }, []);
 
-  // Suscribirse a mensajes en tiempo real
+  // ⭐️ CAMBIO 2: Se movió la función `notificarEscribiendo` fuera del `useEffect` para que sea un `useCallback` de nivel superior.
+  const notificarEscribiendo = useCallback(() => {
+    chatUseCase.actualizarEstadoEscritura(true);
+
+    // Limpiar timeout anterior
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Después de 2 segundos sin escribir, marcar como no escribiendo
+    typingTimeoutRef.current = setTimeout(() => {
+      chatUseCase.actualizarEstadoEscritura(false);
+    }, 2000);
+  }, []); // Dependencias vacías.
+
+  // ⭐️ CAMBIO 3: Se eliminó el primer `useEffect` mal cerrado y se mantuvo solo este, que maneja las suscripciones en tiempo real.
   useEffect(() => {
-    // Cargar mensajes iniciales
     cargarMensajes();
 
-    // Suscribirse a nuevos mensajes
-    const desuscribir = chatUseCase.suscribirseAMensajes((nuevoMensaje) => {
+    const desuscribirMensajes = chatUseCase.suscribirseAMensajes((nuevoMensaje) => {
       setMensajes(prev => {
-        // Evitar duplicados
         if (prev.some(m => m.id === nuevoMensaje.id)) {
           return prev;
         }
@@ -53,11 +68,22 @@ export const useChat = () => {
       });
     });
 
-    // Limpiar suscripción al desmontar
+    // Suscribirse a typing status
+    const desuscribirTyping = chatUseCase.suscribirseATypingStatus((usuarios) => {
+      setUsuariosEscribiendo(usuarios);
+    });
+
+    // Limpiar al desmontar
     return () => {
-      desuscribir();
+      desuscribirMensajes();
+      desuscribirTyping();
+      chatUseCase.actualizarEstadoEscritura(false); // Marcar como no escribiendo
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
     };
-  }, [cargarMensajes]);
+  }, [cargarMensajes] // Dependencia: para cargar mensajes iniciales
+);
 
   return {
     mensajes,
@@ -66,5 +92,8 @@ export const useChat = () => {
     enviarMensaje,
     eliminarMensaje,
     recargarMensajes: cargarMensajes,
-  };
-};
+    usuariosEscribiendo,
+    notificarEscribiendo,
+  }
+
+}

@@ -7,5 +7,6 @@ export interface Mensaje {
   usuario?: {
     email: string;
     rol: string;
+    nombre?: string; 
   };
 }

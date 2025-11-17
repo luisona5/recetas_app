@@ -150,4 +150,6 @@ export const globalStyles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.background,
   },
+
+  
 });
